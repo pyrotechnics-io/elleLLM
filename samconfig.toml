@@ -1,12 +1,11 @@
 version = 0.1
 
 [default.build.parameters]
-# Compile llama.cpp inside the Lambda build image so the binary matches the
-# python3.12 runtime. GGML_NATIVE=OFF targets generic x86_64 with AVX2 rather
-# than the build machine's CPU; OpenMP is off because the runtime lacks libgomp.
+# Build in the Lambda build image so the compiled llama.cpp matches the runtime
+# (needed on macOS/Windows hosts). In AWS CloudShell, which has no Docker, run
+# `sam build --no-use-container` instead.
 use_container = true
 cached = true
-container_env_var = ["CMAKE_ARGS=-DGGML_NATIVE=OFF -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_OPENMP=OFF"]
 
 [default.deploy.parameters]
 capabilities = "CAPABILITY_IAM"

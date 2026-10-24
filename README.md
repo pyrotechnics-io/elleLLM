@@ -61,16 +61,28 @@ and Docker (only used by `sam build` to compile llama.cpp inside the Lambda
 build image so the binary matches the runtime; nothing is pushed anywhere).
 
 ```bash
-sam build                      # flags live in samconfig.toml
+sam build                      # builds in the Lambda build image (see samconfig.toml)
 sam deploy --guided --parameter-overrides ApiKey=sk-choose-a-secret
+```
+
+**AWS CloudShell** (no Docker): install the compiler tools and build without a
+container. The Makefile fetches dependency wheels for the Lambda runtime's
+Python 3.12 whatever Python CloudShell has, and fails the build if a
+wrongly-built extension slips in.
+
+```bash
+sudo dnf install -y cmake gcc-c++ git
+sam build --no-use-container
+sam deploy --guided --parameter-overrides ApiKey=<a long random string>
 ```
 
 The deploy prints `BaseUrl`, something like
 `https://abc123.lambda-url.us-east-1.on.aws/v1`.
 
 To bundle a different GGUF that still fits, override the download URL:
-`sam build --container-env-var MODEL_URL=https://...gguf` (plus the
-`CMAKE_ARGS` from `samconfig.toml`, since a command-line value replaces it).
+`MODEL_URL=https://...gguf sam build --no-use-container`, or
+`sam build --container-env-var MODEL_URL=https://...gguf` when building in the
+container.
 
 Parameters:
 
