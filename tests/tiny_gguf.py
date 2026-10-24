@@ -2,7 +2,7 @@
 
 The output is gibberish, but it lets the OpenAI-compatible server start in a
 second and exercises the full request/response path without downloading the
-multi-GB Phi model.
+real model.
 """
 
 import string

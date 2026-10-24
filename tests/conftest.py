@@ -41,7 +41,7 @@ def base_url(tmp_path_factory):
 
     - BASE_URL set: test an already-running server (e.g. the Docker image, or
       the deployed Function URL).
-    - MODEL_PATH set: start the server locally on that GGUF (e.g. Phi-4-mini).
+    - MODEL_PATH set: start the server locally on that GGUF (e.g. Qwen2.5-0.5B).
     - otherwise: start the server on a tiny random GGUF built on the fly.
     """
     if os.environ.get("BASE_URL"):
@@ -61,14 +61,14 @@ def base_url(tmp_path_factory):
     env = {
         **os.environ,
         "MODEL": model,
-        "MODEL_ALIAS": "phi-4-mini",
+        "MODEL_ALIAS": "qwen2.5-0.5b-instruct",
         "HOST": "127.0.0.1",
         "PORT": str(port),
         "N_CTX": "512",
         "API_KEY": API_KEY,
     }
     proc = subprocess.Popen(
-        [str(ROOT / "scripts" / "run.sh")],
+        [str(ROOT / "src" / "run.sh")],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

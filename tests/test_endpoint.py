@@ -12,12 +12,12 @@ MESSAGES = [
 
 def test_list_models(client):
     ids = [m.id for m in client.models.list().data]
-    assert "phi-4-mini" in ids
+    assert "qwen2.5-0.5b-instruct" in ids
 
 
 def test_chat_completion(client):
     resp = client.chat.completions.create(
-        model="phi-4-mini",
+        model="qwen2.5-0.5b-instruct",
         messages=MESSAGES,
         max_tokens=16,
         temperature=0.2,
@@ -34,7 +34,7 @@ def test_chat_completion(client):
 
 def test_chat_completion_stream(client):
     stream = client.chat.completions.create(
-        model="phi-4-mini",
+        model="qwen2.5-0.5b-instruct",
         messages=MESSAGES,
         max_tokens=16,
         stream=True,
@@ -50,7 +50,7 @@ def test_chat_completion_stream(client):
 def test_rejects_missing_api_key(base_url):
     r = requests.post(
         f"{base_url}/chat/completions",
-        json={"model": "phi-4-mini", "messages": MESSAGES, "max_tokens": 4},
+        json={"model": "qwen2.5-0.5b-instruct", "messages": MESSAGES, "max_tokens": 4},
         timeout=60,
     )
     assert r.status_code == 401
@@ -60,7 +60,7 @@ def test_raw_http_shape(base_url):
     r = requests.post(
         f"{base_url}/chat/completions",
         headers={"Authorization": f"Bearer {API_KEY}"},
-        json={"model": "phi-4-mini", "messages": MESSAGES, "max_tokens": 8},
+        json={"model": "qwen2.5-0.5b-instruct", "messages": MESSAGES, "max_tokens": 8},
         timeout=120,
     )
     r.raise_for_status()
