@@ -1,0 +1,6 @@
+.git
+.aws-sam
+models
+tests
+__pycache__
+*.gguf

@@ -1,0 +1,6 @@
+-r requirements.txt
+openai>=1.40
+pytest>=8
+requests>=2.31
+gguf>=0.10
+numpy>=1.26

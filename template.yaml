@@ -1,0 +1,58 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  elleLLM - Phi-4-mini (GGUF, 4-bit) running entirely inside AWS Lambda,
+  exposed as an OpenAI-compatible Chat Completions API on a Function URL.
+
+Parameters:
+  ApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: >
+      Bearer token clients must send (Authorization: Bearer <key>), like an
+      OpenAI API key. Leave empty to allow unauthenticated access.
+  MemorySize:
+    Type: Number
+    Default: 10240
+    MinValue: 4096
+    MaxValue: 10240
+    Description: >
+      Lambda memory in MB. vCPUs scale with memory (10240 MB = 6 vCPUs), and
+      token speed scales with vCPUs, so the maximum is the sensible default.
+  ContextSize:
+    Type: Number
+    Default: 4096
+    Description: Context window (prompt + completion tokens) in tokens.
+
+Conditions:
+  HasApiKey: !Not [!Equals [!Ref ApiKey, ""]]
+
+Resources:
+  LlmFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Architectures: [x86_64]
+      MemorySize: !Ref MemorySize
+      # Function URLs allow up to 15 minutes; API Gateway would cap us at 29s.
+      Timeout: 300
+      EphemeralStorage:
+        Size: 512
+      Environment:
+        Variables:
+          N_CTX: !Ref ContextSize
+          API_KEY: !If [HasApiKey, !Ref ApiKey, !Ref AWS::NoValue]
+      FunctionUrlConfig:
+        AuthType: NONE
+        InvokeMode: RESPONSE_STREAM
+    Metadata:
+      DockerContext: .
+      Dockerfile: Dockerfile
+
+Outputs:
+  BaseUrl:
+    Description: Use this as the OpenAI SDK base_url.
+    Value: !Sub "${LlmFunctionUrl.FunctionUrl}v1"
+  FunctionName:
+    Value: !Ref LlmFunction
