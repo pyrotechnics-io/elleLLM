@@ -41,7 +41,7 @@ def base_url(tmp_path_factory):
 
     - BASE_URL set: test an already-running server (e.g. the Docker image, or
       the deployed Function URL).
-    - MODEL_PATH set: start the server locally on that GGUF (e.g. Qwen2.5-0.5B).
+    - MODEL_PATH set: start the server locally on that GGUF (e.g. SmolLM2-135M).
     - otherwise: start the server on a tiny random GGUF built on the fly.
     """
     if os.environ.get("BASE_URL"):
@@ -61,7 +61,7 @@ def base_url(tmp_path_factory):
     env = {
         **os.environ,
         "MODEL": model,
-        "MODEL_ALIAS": "qwen2.5-0.5b-instruct",
+        "MODEL_ALIAS": "smollm2-135m-instruct",
         "HOST": "127.0.0.1",
         "PORT": str(port),
         "N_CTX": "512",

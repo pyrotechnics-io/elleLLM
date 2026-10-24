@@ -2,11 +2,11 @@
 
 A small conversational model running **entirely inside one AWS Lambda function**,
 exposed as an **OpenAI-compatible** Chat Completions API. No GPU, no external
-inference service, and no container image or ECR: it's a plain zip on the
-managed `python3.12` runtime, and the model file sits in S3.
+inference service, no container image, no ECR and no S3: it's a single zip on
+the managed `python3.12` runtime with the model file inside it.
 
-- **Model:** [Qwen2.5-0.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF),
-  4-bit `Q4_K_M` GGUF (~0.4 GB), Apache-2.0.
+- **Model:** [SmolLM2-135M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct)
+  by Hugging Face, 8-bit `Q8_0` GGUF (~145 MB), Apache-2.0.
 - **Runtime:** [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) and its
   built-in OpenAI-compatible server (`python -m llama_cpp.server`). There is no
   hand-written API code: request/response shapes, streaming and auth all come
@@ -24,31 +24,27 @@ client (OpenAI SDK) ──HTTPS──▶ Lambda Function URL (streaming)
                                    ▼
                Lambda Web Adapter layer ──▶ llama_cpp.server on :8080
                                                   │
-              cold start only: S3 ──▶ /tmp/model.gguf (parallel download)
+                                         model.gguf (in the zip)
 ```
 
-The deployment package is only the Python dependencies (~85 MB unzipped,
-inside the 250 MB zip limit). A model can't go in the zip, so on each cold start
-`src/fetch_model.py` pulls it from the stack's S3 bucket into `/tmp` with
-parallel ranged GETs, then the server memory-maps it. Warm invocations reuse it.
+`sam build` runs `src/Makefile`, which installs the Python dependencies, copies
+`run.sh`, and downloads the model into the package. Lambda's limit for a zip is
+250 MB unzipped; this package is about 215 MB (≈70 MB of dependencies + 145 MB
+model), and the build fails with a clear message if a model would push it over.
 
-## Why Qwen2.5-0.5B
+## Why SmolLM2-135M
 
-It was picked to keep the function light and fast: ~0.4 GB loads in a few
-seconds on a cold start, needs well under 1 GB of RAM, and generates tens of
-tokens per second on a couple of Lambda vCPUs. It's one of the best instruction
-models at this size and has a proper chat template.
+It's the most capable chat model that fits inside a Lambda zip next to the
+inference library, so the function stays self-contained, light and fast. The
+8-bit quantization is used rather than 4-bit because very small models lose
+noticeably more quality when quantized hard, and there's room for it.
 
-**Want better answers?** The model is just a file in S3. For example, Phi-4-mini
-(3.8B, ~2.5 GB) is much smarter but has slower cold starts and generation:
-
-```bash
-curl -L -o phi.gguf https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf
-aws s3 cp phi.gguf "s3://$MODEL_BUCKET/phi.gguf"
-sam deploy --parameter-overrides ModelKey=phi.gguf ModelAlias=phi-4-mini MemorySize=10240
-```
-
-(For a model that size also raise `EphemeralStorage` in `template.yaml` to 4096.)
+What to expect from it: fine for rephrasing short text, extracting a field,
+or answering yes/no and category questions with a tight prompt. It can't do
+arithmetic, gets facts wrong often, and drifts after a few sentences or a
+couple of chat turns. For better answers you'd need a model that no longer
+fits in a zip (e.g. Qwen2.5-0.5B at ~0.4 GB), which means loading it from S3 at
+cold start or using a container image.
 
 ## Endpoints
 
@@ -56,38 +52,34 @@ sam deploy --parameter-overrides ModelKey=phi.gguf ModelAlias=phi-4-mini MemoryS
 |--------|-------------------------|-----------------------------------------|
 | POST   | `/v1/chat/completions`  | `model`, `messages`, `max_tokens`, `temperature`, `top_p`, `stop`, `stream` (default `false`), etc. |
 | POST   | `/v1/completions`       | Legacy text completions                 |
-| GET    | `/v1/models`            | Returns `qwen2.5-0.5b-instruct`         |
+| GET    | `/v1/models`            | Returns `smollm2-135m-instruct`         |
 
 ## Deploy
 
 Prerequisites: AWS CLI with credentials, [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html),
-and Docker (only used by `sam build` to compile llama.cpp in the Lambda build
-image so the binary matches the runtime; nothing is pushed to ECR).
+and Docker (only used by `sam build` to compile llama.cpp inside the Lambda
+build image so the binary matches the runtime; nothing is pushed anywhere).
 
 ```bash
-# 1. Build and deploy the function (samconfig.toml has the build flags).
-sam build
+sam build                      # flags live in samconfig.toml
 sam deploy --guided --parameter-overrides ApiKey=sk-choose-a-secret
-
-# 2. Upload the model to the bucket the stack created (output "ModelBucket").
-MODEL_BUCKET=$(aws cloudformation describe-stacks --stack-name <your-stack> \
-  --query "Stacks[0].Outputs[?OutputKey=='ModelBucket'].OutputValue" --output text)
-curl -L -o qwen.gguf https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
-aws s3 cp qwen.gguf "s3://$MODEL_BUCKET/qwen2.5-0.5b-instruct-q4_k_m.gguf"
 ```
 
 The deploy prints `BaseUrl`, something like
 `https://abc123.lambda-url.us-east-1.on.aws/v1`.
+
+To bundle a different GGUF that still fits, override the download URL:
+`sam build --container-env-var MODEL_URL=https://...gguf` (plus the
+`CMAKE_ARGS` from `samconfig.toml`, since a command-line value replaces it).
 
 Parameters:
 
 | Parameter     | Default | Meaning |
 |---------------|---------|---------|
 | `ApiKey`      | empty   | Bearer token clients must send. Empty means the URL is open to anyone. **Set one.** |
-| `ModelKey`    | `qwen2.5-0.5b-instruct-q4_k_m.gguf` | S3 key of the GGUF in the model bucket. |
-| `ModelAlias`  | `qwen2.5-0.5b-instruct` | Model id reported by `/v1/models`. |
-| `MemorySize`  | `4096`  | MB; also sets vCPUs (≈2.3 at 4096) and therefore speed. |
-| `ContextSize` | `4096`  | Prompt + completion tokens. |
+| `ModelAlias`  | `smollm2-135m-instruct` | Model id reported by `/v1/models`. |
+| `MemorySize`  | `2048`  | MB; also sets vCPUs (≈1.2 at 2048) and therefore speed. |
+| `ContextSize` | `4096`  | Prompt + completion tokens (the model supports up to 8192). |
 | `WebAdapterLayerArn` | public layer | Override the Lambda Web Adapter layer ARN if needed. |
 
 ## Call it with the OpenAI SDK
@@ -103,19 +95,19 @@ client = OpenAI(
 )
 
 resp = client.chat.completions.create(
-    model="qwen2.5-0.5b-instruct",
+    model="smollm2-135m-instruct",
     messages=[
         {"role": "system", "content": "You are a concise assistant."},
-        {"role": "user", "content": "Explain AWS Lambda in one sentence."},
+        {"role": "user", "content": "Rewrite politely: send me the report now."},
     ],
     max_tokens=128,
-    temperature=0.7,
+    temperature=0.3,
 )
 print(resp.choices[0].message.content)
 
 # Streaming works too:
 for chunk in client.chat.completions.create(
-    model="qwen2.5-0.5b-instruct",
+    model="smollm2-135m-instruct",
     messages=[{"role": "user", "content": "Write a haiku about clouds."}],
     stream=True,
 ):
@@ -128,7 +120,7 @@ Or with curl:
 curl "$BASE_URL/chat/completions" \
   -H "Authorization: Bearer sk-choose-a-secret" \
   -H "Content-Type: application/json" \
-  -d '{"model": "qwen2.5-0.5b-instruct", "messages": [{"role": "user", "content": "Hi!"}], "max_tokens": 64}'
+  -d '{"model": "smollm2-135m-instruct", "messages": [{"role": "user", "content": "Hi!"}], "max_tokens": 64}'
 ```
 
 ## Run and test locally
@@ -145,10 +137,11 @@ CMAKE_ARGS="-DGGML_OPENMP=OFF" pip install -r requirements-dev.txt
 pytest -q
 
 # Real model:
-MODEL_PATH=qwen.gguf pytest -q
+curl -L -o smol.gguf https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q8_0.gguf
+MODEL_PATH=smol.gguf pytest -q
 
 # Run the server by hand:
-MODEL=qwen.gguf API_KEY=test-key src/run.sh   # serves http://localhost:8080/v1
+MODEL=smol.gguf API_KEY=test-key src/run.sh   # serves http://localhost:8080/v1
 
 # Against the deployed function:
 BASE_URL=https://abc123.lambda-url.us-east-1.on.aws/v1 OPENAI_API_KEY=sk-choose-a-secret pytest -q
@@ -158,20 +151,15 @@ BASE_URL=https://abc123.lambda-url.us-east-1.on.aws/v1 OPENAI_API_KEY=sk-choose-
 
 These are estimates; they haven't been measured on a live deployment yet.
 
-- **Cold start.** Lambda starts the runtime, downloads ~0.4 GB from S3 into
-  `/tmp`, and loads the model: expect a few seconds (roughly 3 to 8 s).
-  Warm requests skip all of that. A sandbox stays warm for some minutes after
-  its last request.
-- **Speed.** At 4096 MB, expect roughly 20 to 40 tokens/s, so a 150-token
-  answer takes a few seconds. More memory means more vCPUs and faster tokens.
+- **Cold start.** Lambda loads the ~215 MB package, starts Python and maps the
+  model: expect roughly 2 to 4 seconds. Warm requests skip this.
+- **Speed.** A 135M model is light; at 2048 MB expect very roughly 50+ tokens/s,
+  so most answers come back in a second or two.
 - **One request at a time per instance.** Concurrent callers get separate
   Lambda instances, each with its own cold start.
-- **Quality.** A 0.5B model is fine for short chat, rewriting, simple
-  classification and extraction, but it makes things up easily, loses track
-  in long conversations, and is weak at reasoning and maths. Swap in a bigger
-  GGUF (see above) when that matters.
-- **Cost.** At 4096 MB you pay about $0.000067 per second of execution
-  (us-east-1 x86), so a 3-second answer is about $0.0002. Idle costs nothing
-  except S3 storage for the model (about a cent a month). No ECR.
+- **Quality.** See "Why SmolLM2-135M" above. Keep prompts short and specific
+  and use a low `temperature`.
+- **Cost.** At 2048 MB you pay about $0.000033 per second of execution
+  (us-east-1 x86), so a 1.5-second answer is about $0.00005. Idle costs nothing.
 - **Not supported by the server:** `n > 1` and image inputs. Tool calling and
   JSON mode depend on llama-cpp-python's support for the model's chat format.

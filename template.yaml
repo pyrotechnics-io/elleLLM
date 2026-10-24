@@ -1,9 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  elleLLM - Qwen2.5-0.5B-Instruct (GGUF, 4-bit) running entirely inside AWS Lambda on the
-  managed Python runtime, exposed as an OpenAI-compatible Chat Completions API
-  on a Function URL. No container image, no ECR.
+  elleLLM - SmolLM2-135M-Instruct (GGUF) running entirely inside AWS Lambda on
+  the managed Python runtime, exposed as an OpenAI-compatible Chat Completions
+  API on a Function URL. The model ships inside the zip: no container image,
+  no ECR, no S3.
 
 Parameters:
   ApiKey:
@@ -13,23 +14,18 @@ Parameters:
     Description: >
       Bearer token clients must send (Authorization: Bearer <key>), like an
       OpenAI API key. Leave empty to allow unauthenticated access.
-  ModelKey:
-    Type: String
-    Default: qwen2.5-0.5b-instruct-q4_k_m.gguf
-    Description: S3 key of the GGUF file inside the stack's model bucket.
   ModelAlias:
     Type: String
-    Default: qwen2.5-0.5b-instruct
+    Default: smollm2-135m-instruct
     Description: Model id reported by /v1/models.
   MemorySize:
     Type: Number
-    Default: 4096
-    MinValue: 1024
+    Default: 2048
+    MinValue: 512
     MaxValue: 10240
     Description: >
       Lambda memory in MB. vCPUs scale with memory (1769 MB = 1 vCPU, 10240 MB
-      = 6 vCPUs) and token speed scales with vCPUs. 4096 MB (~2.3 vCPUs) is a
-      good price/speed balance for a 0.5B model.
+      = 6 vCPUs) and token speed scales with vCPUs.
   ContextSize:
     Type: Number
     Default: 4096
@@ -46,15 +42,6 @@ Conditions:
   HasAdapterOverride: !Not [!Equals [!Ref WebAdapterLayerArn, ""]]
 
 Resources:
-  ModelBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-
   LlmFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -64,10 +51,7 @@ Resources:
       Architectures: [x86_64]
       MemorySize: !Ref MemorySize
       # Function URLs allow up to 15 minutes; API Gateway would cap us at 29s.
-      Timeout: 300
-      # The model is downloaded to /tmp on each cold start.
-      EphemeralStorage:
-        Size: 1024
+      Timeout: 120
       Layers:
         - !If
           - HasAdapterOverride
@@ -79,24 +63,19 @@ Resources:
           AWS_LWA_PORT: "8080"
           AWS_LWA_READINESS_CHECK_PATH: /v1/models
           AWS_LWA_INVOKE_MODE: response_stream
-          MODEL_S3_BUCKET: !Ref ModelBucket
-          MODEL_S3_KEY: !Ref ModelKey
           MODEL_ALIAS: !Ref ModelAlias
           N_CTX: !Ref ContextSize
           API_KEY: !If [HasApiKey, !Ref ApiKey, !Ref AWS::NoValue]
-      Policies:
-        - S3ReadPolicy:
-            BucketName: !Ref ModelBucket
       FunctionUrlConfig:
         AuthType: NONE
         InvokeMode: RESPONSE_STREAM
+    Metadata:
+      # src/Makefile installs dependencies and downloads the model into the zip.
+      BuildMethod: makefile
 
 Outputs:
   BaseUrl:
     Description: Use this as the OpenAI SDK base_url.
     Value: !Sub "${LlmFunctionUrl.FunctionUrl}v1"
-  ModelBucket:
-    Description: Upload the GGUF model here, under the ModelKey name.
-    Value: !Ref ModelBucket
   FunctionName:
     Value: !Ref LlmFunction
