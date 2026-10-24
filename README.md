@@ -1,5 +1,7 @@
 # elleLLM
 
+aka LambdaLLM 
+
 A small conversational model running **entirely inside one AWS Lambda function**,
 exposed as an **OpenAI-compatible** Chat Completions API. No GPU, no external
 inference service, no container image, no ECR and no S3: it's a single zip on
