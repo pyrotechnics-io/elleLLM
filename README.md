@@ -1,6 +1,6 @@
 # elleLLM
 
-aka LambdaLLM 
+<img width="1376" height="768" alt="elleLLM" src="https://github.com/user-attachments/assets/71006894-8aed-479e-97a7-f15a851ddd58" />
 
 A small conversational model running **entirely inside one AWS Lambda function**,
 exposed as an **OpenAI-compatible** Chat Completions API. No GPU, no external
