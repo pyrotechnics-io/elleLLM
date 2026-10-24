@@ -54,6 +54,20 @@ cold start or using a container image.
 | POST   | `/v1/completions`       | Legacy text completions                 |
 | GET    | `/v1/models`            | Returns `smollm2-135m-instruct`         |
 
+## Shortcuts (Makefile)
+
+```bash
+echo 'API_KEY=<a long random string>' > .env   # once; .env is gitignored
+make deploy      # build, check the package, deploy, print the base_url
+make test        # run the tests against the deployed endpoint
+make ask Q='Hello there'   # one chat message
+make logs        # last 30 minutes of Lambda logs
+make help        # everything else (NO_DOCKER=1, STACK=..., REGION=..., MEMORY=...)
+```
+
+`make deploy` refuses to deploy unless the build produced a complete package.
+The manual `sam` commands are below.
+
 ## Deploy
 
 Prerequisites: AWS CLI with credentials, [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html),
