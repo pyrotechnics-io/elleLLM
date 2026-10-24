@@ -13,9 +13,9 @@ MEMORY  ?= 2048
 VENV    ?= .venv
 Q       ?= Say hi in five words.
 
-# Build in the Lambda build image (needs Docker). NO_DOCKER=1 builds on this
-# machine instead (needs cmake and a C++ compiler; Linux only).
-SAM_BUILD_FLAGS := $(if $(NO_DOCKER),--no-use-container)
+# Builds on this machine (needs cmake and a C++ compiler; Linux only). Set
+# USE_DOCKER=1 to build in the Lambda build image instead (needs Docker).
+SAM_BUILD_FLAGS := $(if $(USE_DOCKER),--use-container,--no-use-container)
 BUILD_DIR := .aws-sam/build/LlmFunction
 
 # Endpoint of the deployed stack; override to test something else, e.g.
@@ -25,7 +25,7 @@ BASE_URL ?= $(shell $(MAKE) --no-print-directory -s url)
 .PHONY: help build check-build deploy test test-local url ask logs stack clean check-key
 
 help:
-	@echo "make build            build the Lambda package (NO_DOCKER=1 to build without Docker)"
+	@echo "make build            build the Lambda package (USE_DOCKER=1 to build in Docker)"
 	@echo "make deploy           build, deploy, and print the endpoint (needs API_KEY)"
 	@echo "make test             run the tests against the deployed endpoint (needs API_KEY)"
 	@echo "make test-local       run the tests against a local server (tiny test model)"
@@ -40,8 +40,40 @@ help:
 check-key:
 	@test -n "$(API_KEY)" || { echo "Set API_KEY: make $(MAKECMDGOALS) API_KEY=<secret>  (or put API_KEY=... in .env)" >&2; exit 1; }
 
-build:
-	sam build $(SAM_BUILD_FLAGS)
+# src/Makefile runs `python3 -m pip`; the active Python may have no pip (uv,
+# nix), so build with a private venv seeded with pip on Python 3.12.
+BUILD_VENV := .build-venv
+$(BUILD_VENV)/bin/python:
+	uv venv --seed --python 3.12 $(BUILD_VENV) 2>/dev/null || python3 -m venv $(BUILD_VENV)
+
+# The llama.cpp compile needs a lot of scratch space; /tmp is often a small
+# tmpfs, so keep temp files on the project's disk instead.
+BUILD_TMP := .build-tmp
+
+# A host build links against the host's glibc/libstdc++, which are usually newer
+# than Lambda's (glibc 2.34) and make the function die at startup. zig cc can
+# target an old glibc and links libc++ statically, so use it as the compiler.
+ZIG_CC_DIR := .build-zigcc
+GLIBC_TARGET := 2.34
+$(ZIG_CC_DIR)/cc $(ZIG_CC_DIR)/c++:
+	@command -v zig >/dev/null || { echo "zig not found: install it (https://ziglang.org/download/) or use USE_DOCKER=1" >&2; exit 1; }
+	mkdir -p $(ZIG_CC_DIR)
+	printf '#!/bin/sh\nexec zig cc -target x86_64-linux-gnu.$(GLIBC_TARGET) "$$@"\n' > $(ZIG_CC_DIR)/cc
+	printf '#!/bin/sh\nexec zig c++ -target x86_64-linux-gnu.$(GLIBC_TARGET) "$$@"\n' > $(ZIG_CC_DIR)/c++
+	chmod +x $(ZIG_CC_DIR)/cc $(ZIG_CC_DIR)/c++
+
+ifdef USE_DOCKER
+BUILD_ENV :=
+BUILD_DEPS :=
+else
+BUILD_ENV := CC=$(abspath $(ZIG_CC_DIR))/cc CXX=$(abspath $(ZIG_CC_DIR))/c++
+BUILD_DEPS := $(ZIG_CC_DIR)/cc
+endif
+
+build: $(BUILD_VENV)/bin/python $(BUILD_DEPS)
+	mkdir -p $(BUILD_TMP)
+	$(BUILD_ENV) TMPDIR=$(abspath $(BUILD_TMP)) PYTHON=$(abspath $(BUILD_VENV))/bin/python sam build $(SAM_BUILD_FLAGS)
+	rm -rf $(BUILD_TMP)
 	@$(MAKE) --no-print-directory check-build
 
 # Deploying without a good build uploads the raw source folder and the function
@@ -49,6 +81,14 @@ build:
 check-build:
 	@test -d $(BUILD_DIR)/llama_cpp && test -f $(BUILD_DIR)/model.gguf && test -f $(BUILD_DIR)/run.sh \
 		|| { echo "$(BUILD_DIR) is missing llama_cpp, model.gguf or run.sh: run 'make build' first" >&2; exit 1; }
+	@# The libraries must only need symbols Lambda's runtime (glibc 2.34) has,
+	@# and nothing it lacks (libstdc++, libgomp).
+	@for f in $(BUILD_DIR)/llama_cpp/lib/*.so; do \
+		v=$$(objdump -T $$f | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -1); \
+		n=$$(objdump -p $$f | awk '/NEEDED/{print $$2}' | grep -E 'libstdc\+\+|libgomp'); \
+		if [ -n "$$n" ] || [ "$$(printf '%s\n%s\n' "$$v" GLIBC_$(GLIBC_TARGET) | sort -V | tail -1)" != "GLIBC_$(GLIBC_TARGET)" ]; then \
+			echo "$$f needs $$v $$n: not loadable on Lambda (glibc $(GLIBC_TARGET)); build with zig or USE_DOCKER=1" >&2; exit 1; fi; \
+	done
 	@echo "build ok: $$(du -sm $(BUILD_DIR) | cut -f1) MB"
 
 deploy: check-key build

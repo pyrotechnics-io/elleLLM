@@ -1,10 +1,10 @@
 version = 0.1
 
 [default.build.parameters]
-# Build in the Lambda build image so the compiled llama.cpp matches the runtime
-# (needed on macOS/Windows hosts). In AWS CloudShell, which has no Docker, run
-# `sam build --no-use-container` instead.
-use_container = true
+# Build on the host (Linux with cmake and a C++ compiler; works in AWS
+# CloudShell). Use `make build USE_DOCKER=1` or `sam build --use-container` to
+# build in the Lambda build image instead (needed on macOS/Windows hosts).
+use_container = false
 cached = true
 
 [default.deploy.parameters]

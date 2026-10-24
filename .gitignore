@@ -6,3 +6,6 @@ venv/
 models/
 *.gguf
 .env
+.build-venv/
+.build-tmp/
+.build-zigcc/
